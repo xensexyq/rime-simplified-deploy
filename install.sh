@@ -26,11 +26,16 @@ if ! deps_ok; then
   if command -v apt-get >/dev/null; then
     say '安装 IBus Rime 及依赖（需要 sudo）'
     sudo apt-get update
-    sudo apt-get install -y ibus ibus-rime librime-bin rime-data-luna-pinyin python3-yaml
+    sudo apt-get install -y ibus ibus-rime librime-bin rime-data-luna-pinyin python3-yaml wamerican
   else
     die '缺少依赖。请用系统包管理器安装 ibus、ibus-rime、rime_deployer（librime 工具）、朙月拼音方案数据和 python3 的 PyYAML 后重试。'
   fi
   deps_ok || die '依赖安装后仍不完整，请检查 ibus、rime_deployer、luna_pinyin_simp 方案和 python3-yaml。'
+fi
+
+if [[ ! -f "${RIME_ENGLISH_WORDLIST:-/usr/share/dict/words}" ]] && command -v apt-get >/dev/null; then
+  say '安装英文词表 wamerican（需要 sudo；失败时只启用内置英文词汇）'
+  sudo apt-get install -y wamerican || say '英文词表安装失败，继续部署。'
 fi
 
 say "下载 $REPO@$BRANCH 到 $DEST"

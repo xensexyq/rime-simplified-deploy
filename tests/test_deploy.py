@@ -31,10 +31,14 @@ FAKE_DEPLOYER = textwrap.dedent('''\
                     node = node.setdefault(part, {{}})
                 node[parts[-1]] = value
         (build / source.name).write_text(yaml.safe_dump(data, allow_unicode=True))
+        for dependency in (data.get('schema') or {{}}).get('dependencies') or []:
+            if (user / (dependency + '.schema.yaml')).exists():
+                (build / (dependency + '.table.bin')).write_text('')
 ''')
 
 SHARED_SCHEMA = {
-    'schema': {'schema_id': 'luna_pinyin_simp', 'name': '朙月拼音·简化字'},
+    'schema': {'schema_id': 'luna_pinyin_simp', 'name': '朙月拼音·简化字', 'dependencies': ['stroke']},
+    'engine': {'translators': ['punct_translator', 'script_translator']},
     'switches': [
         {'name': 'ascii_mode', 'reset': 0, 'states': ['中文', '西文']},
         {'name': 'zh_simp', 'reset': 1, 'states': ['漢字', '汉字']},
@@ -62,8 +66,11 @@ class DeployTests(unittest.TestCase):
         ibus.write_text('#!/bin/sh\n[ "$1 $2" = "engine rime" ] && exit 0\n[ "$1" = engine ] && echo rime\nexit 0\n')
         for tool in (deployer, ibus):
             tool.chmod(0o755)
+        wordlist = base / 'words'
+        wordlist.write_text("hello\nHello\nPolish\nlinux\nit's\na\nmake\n")
         self.env = dict(os.environ, PATH=f'{bin_dir}:{os.environ["PATH"]}', RIME_USER_DIR=str(self.user),
-                        RIME_SHARED_DIR=str(self.shared), RIME_PYTHON=sys.executable)
+                        RIME_SHARED_DIR=str(self.shared), RIME_PYTHON=sys.executable,
+                        RIME_ENGLISH_WORDLIST=str(wordlist))
 
     def run_deploy(self, *args, check=True):
         result = subprocess.run(['bash', str(PACKAGE / 'deploy.sh'), *args], env=self.env,
@@ -104,6 +111,47 @@ class DeployTests(unittest.TestCase):
         first = custom.read_text()
         self.run_deploy('--no-restart')
         self.assertEqual(custom.read_text(), first)
+
+    def english_entries(self):
+        lines = (self.user / 'english_words.dict.yaml').read_text().split('...\n', 1)[1].split('\n')
+        return [tuple(line.split('\t')) for line in lines if line]
+
+    def test_english_words_enabled_and_idempotent(self):
+        self.run_deploy('--no-restart')
+        entries = self.english_entries()
+        self.assertIn(('GitHub', 'github'), entries)
+        self.assertIn(('Node.js', 'nodejs'), entries)
+        self.assertIn(('hello', 'hello'), entries)
+        self.assertIn(('Polish', 'polish'), entries)
+        self.assertIn(('make', 'make'), entries)
+        self.assertNotIn(('Hello', 'hello'), entries)
+        self.assertNotIn(('linux', 'linux'), entries)
+        self.assertFalse({'a', "it's"} & {code for _, code in entries})
+        self.assertTrue((self.user / 'english_words.schema.yaml').exists())
+        compiled = self.compiled()
+        self.assertEqual(compiled['engine']['translators'],
+                         ['punct_translator', 'script_translator', 'table_translator@english_words'])
+        self.assertEqual(compiled['schema']['dependencies'], ['stroke', 'english_words'])
+        self.assertEqual(compiled['english_words']['initial_quality'], 0)
+        custom = self.user / 'luna_pinyin_simp.custom.yaml'
+        first = custom.read_text()
+        self.run_deploy('--no-restart')
+        self.assertEqual(custom.read_text(), first)
+
+    def test_no_english_removes_previous_setup(self):
+        self.run_deploy('--no-restart')
+        self.run_deploy('--no-restart', '--no-english')
+        patch = self.load('luna_pinyin_simp.custom.yaml')['patch']
+        self.assertNotIn('english_words', patch)
+        self.assertEqual(patch['engine/translators'], ['punct_translator', 'script_translator'])
+        self.assertEqual(patch['schema/dependencies'], ['stroke'])
+        self.assertNotIn('table_translator@english_words', self.compiled()['engine']['translators'])
+
+    def test_missing_wordlist_uses_builtin_words(self):
+        self.env['RIME_ENGLISH_WORDLIST'] = str(self.shared / 'missing')
+        self.assertIn('only built-in', self.run_deploy('--no-restart').stdout)
+        self.assertIn(('GitHub', 'github'), self.english_entries())
+        self.assertNotIn(('hello', 'hello'), self.english_entries())
 
     def test_set_default_moves_schema_first(self):
         self.run_deploy('--no-restart', '--set-default')
