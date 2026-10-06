@@ -3,6 +3,7 @@
 在 Linux 桌面（**IBus + Rime**）上一键配置“朙月拼音·简化字”方案 `luna_pinyin_simp`：
 
 - **稳定输出简体中文**：修复“简体方案却出繁体”的问题。
+- **常用中文词组**：补充日常交流、办公、成语和技术词组，例如“没问题”“会议纪要”“具身智能”。
 - **英文单词候选**：不切换中英文就能直接打出 `hello`、`GitHub`、`JSON` 等常用英文。
 
 不适用于 Fcitx、Windows 小狼毫或 macOS 鼠须管。
@@ -84,16 +85,44 @@ patch:
 
 只匹配完整输入的单词，不做前缀补全，避免拼音输入时出现大量无关英文；英文的 `initial_quality` 为 `0`，因此完整拼音仍然中文优先。需要输入大写开头的英文时，直接按住 Shift 输入首字母即可进入英文直通。
 
+## 常用中文词组和英文缩写
+
+本项目内置 **147 条中文补充词组**和 **364 条英文词汇/缩写**，同时保留系统朙月拼音词库和原有用户学习记录。这是针对常见场景的补充词表，并非完整的现代汉语大词库。
+
+| 输入（小写连续输入） | 候选示例 |
+| --- | --- |
+| `meiwenti` / `shaodengyixia` | 没问题 / 稍等一下 |
+| `huiyijiyao` / `xiangmujindu` | 会议纪要 / 项目进度 |
+| `shibangongbei` / `xunxujianjin` | 事半功倍 / 循序渐进 |
+| `rengongzhineng` / `jushenzhineng` | 人工智能 / 具身智能 |
+| `asap` / `fyi` / `lgtm` | ASAP / FYI / LGTM |
+| `brb` / `tldr` / `idk` | BRB / TLDR / IDK |
+| `kpi` / `okr` / `sop` | KPI / OKR / SOP |
+| `rag` / `slam` / `imu` | RAG / SLAM / IMU |
+
+中文补充采用完整拼音精确匹配，不额外注册中文首字母简码；原拼音方案仍正常工作。英文缩写输入其小写形式，输出词表里指定的大小写。候选排序会受既有配置和使用记录影响，不能保证所有缩写始终排第一。
+
+默认拼写器只接受字母，带数字的词使用明确别名：`ipvfour → IPv4`、`ipvsix → IPv6`、`rostwo → ROS2`、`btob → B2B`、`btoc → B2C`。数字键仍用于选词。
+
+自行补充：
+
+- 中文：编辑 [`chinese/phrases.tsv`](chinese/phrases.tsv)，每行 `词语<Tab>连续小写拼音`，例如 `会议纪要<Tab>huiyijiyao`。`<Tab>` 必须替换成真正的制表符。
+- 英文：编辑 [`english/words.txt`](english/words.txt)，每行一个词，或 `显示内容<Tab>小写字母输入码`。内置英文输入码必须唯一。
+- 修改后执行 `bash deploy.sh`。生成的 `common_phrases.*` 和 `english_words.*` 文件会在下次部署时重新生成，不应直接编辑。
+
+已有安装可重新执行上面的安装命令升级。若直接修改过下载目录中的词表，先保存修改；安装器会替换下载目录。Git 克隆用户可以 `git pull --ff-only` 后运行 `bash deploy.sh`。`--no-english` 只关闭英文候选，中文补充词组仍然启用。
+
 ## 脚本行为
 
 - 检查 `rime_deployer`、`ibus`、PyYAML 和 `luna_pinyin_simp` 方案文件。
 - 若尚未部署过 Rime（没有 `build/default.yaml`），先执行一次初始部署。
 - 检查 `luna_pinyin_simp` 已启用；未启用时报错退出，或使用 `--set-default` 自动启用。
-- 已有 `luna_pinyin_simp.custom.yaml` 时：保留其他配置项与原有开关，只更新简体转换规则和默认开关，修改前创建带时间戳的 `.bak-*` 备份。
+- 已有 `luna_pinyin_simp.custom.yaml` 时：保留其他配置项与原有开关，更新简体转换规则及本项目维护的词库配置，修改前创建带时间戳的 `.bak-*` 备份。
 - 没有该文件时：以方案自带的开关为基础新建，并去掉被取代的 `zh_simp` 开关。
 - 默认启用英文候选：生成 `english_words.dict.yaml` 与 `english_words.schema.yaml`，在自定义配置中追加英文翻译器和方案依赖（保留原有翻译器与依赖）。
-- 所有校验在写入前完成；校验失败时不修改任何文件。
-- 重新部署，并检查生成的 `build/luna_pinyin_simp.schema.yaml` 包含预期配置、英文词典已编译。
+- 中文补充生成独立的 `common_phrases.dict.yaml` 和依赖方案，通过额外翻译器加载，不替换主拼音词典或用户数据库。
+- 配置和词表格式检查在写入自定义配置及词表前完成；首次初始化仍会生成 build 文件。
+- 重新部署，并检查生成的 `build/luna_pinyin_simp.schema.yaml` 包含预期配置、中英文补充词典已编译。
 - 重启 IBus，最多重试 15 秒启用 Rime 并确认引擎名称。
 
 重复执行结果不变（不会重复添加开关）；每次都会备份执行前的配置。YAML 重新写入时会改变排版并移除注释，原始文本保存在备份中。
@@ -152,7 +181,7 @@ ibus restart
 
 ## 测试
 
-测试使用临时目录和模拟的 `rime_deployer` / `ibus`，不会改动真实配置或重启输入法：
+测试覆盖配置保留、重复部署、英文开关、词表生成和真实候选。配置测试使用模拟工具；`test_candidates.py` 在具备系统 IBus Rime 依赖时调用真实 librime 模拟按键，否则跳过。所有测试均使用临时目录，不会改动真实配置或重启输入法：
 
 ```bash
 /usr/bin/python3 -m unittest discover -s tests -v
@@ -162,4 +191,4 @@ ibus restart
 
 ## 许可证
 
-[MIT](LICENSE)。运行时读取的系统英文词表不随本仓库分发，遵循其所属软件包的许可。
+[MIT](LICENSE)。中英文内置词表由项目手工整理；词典和翻译器配置参考 [Rime 官方方案设计文档](https://github.com/rime/home/wiki/RimeWithSchemata)。运行时读取的系统英文词表不随本仓库分发，遵循其所属软件包的许可。

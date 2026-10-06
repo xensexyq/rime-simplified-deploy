@@ -70,6 +70,8 @@ wordlist = Path(sys.argv[5])
 SCHEMA = 'luna_pinyin_simp'
 ENGLISH = 'english_words'
 ENGLISH_TRANSLATOR = f'table_translator@{ENGLISH}'
+CHINESE = 'common_phrases'
+CHINESE_TRANSLATOR = f'table_translator@{CHINESE}'
 
 
 def load_mapping(path):
@@ -105,9 +107,10 @@ def english_dictionary():
             continue
         text, _, code = line.partition('\t')
         code = code.strip() or re.sub('[^a-z]', '', text.lower())
-        if code:
-            entries.append((text.strip(), code))
-            seen.add(code)
+        if not re.fullmatch('[a-z]+', code) or code in seen:
+            sys.exit(f'Invalid or duplicate English code: {code}; no files changed.')
+        entries.append((text.strip(), code))
+        seen.add(code)
     system = {}
     if wordlist.is_file():
         for word in wordlist.read_text(errors='ignore').split():
@@ -205,6 +208,40 @@ else:
             patch[key] = string_list(key, None)
     patch.pop(ENGLISH, None)
 
+# An independent exact-match table supplements the stock Chinese dictionary.
+# Keep the primary translator and its user database unchanged.
+compiled = yaml.safe_load((root / f'build/{SCHEMA}.schema.yaml').read_text()) or {}
+for key, fallback, entry in (
+    ('engine/translators', (compiled.get('engine') or {}).get('translators'), CHINESE_TRANSLATOR),
+    ('schema/dependencies', (compiled.get('schema') or {}).get('dependencies') or [], CHINESE),
+):
+    values = patch.get(key, fallback)
+    if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+        sys.exit(f'Unsupported {key}; no files changed.')
+    patch[key] = [v for v in values if v != entry] + [entry]
+patch[CHINESE] = {'dictionary': CHINESE, 'enable_completion': False,
+                  'enable_sentence': False, 'enable_user_dict': False, 'initial_quality': 1}
+chinese_lines, seen = [], set()
+for line in (english_src.parent / 'chinese/phrases.tsv').read_text(encoding='utf-8').splitlines():
+    if not line or line.startswith('#'):
+        continue
+    fields = line.split('\t')
+    if len(fields) != 2 or not re.fullmatch('[a-z]+', fields[1]) or tuple(fields) in seen:
+        sys.exit(f'Invalid or duplicate Chinese entry: {line}; no files changed.')
+    seen.add(tuple(fields))
+    chinese_lines.append(line)
+chinese_dict = (f'# Generated supplemental phrases; edit chinese/phrases.tsv instead.\n'
+                f'---\nname: {CHINESE}\nversion: "1"\nsort: original\n...\n\n'
+                + '\n'.join(chinese_lines) + '\n')
+chinese_schema = {'schema': {'schema_id': CHINESE, 'name': '常用中文词组', 'version': '1'},
+                  'engine': {'processors': ['speller', 'selector', 'express_editor'],
+                             'segmentors': ['abc_segmentor'], 'translators': ['table_translator']},
+                  'speller': {'alphabet': 'abcdefghijklmnopqrstuvwxyz'},
+                  'translator': {'dictionary': CHINESE}}
+write_atomic(root / f'{CHINESE}.dict.yaml', chinese_dict)
+write_atomic(root / f'{CHINESE}.schema.yaml', yaml.safe_dump(chinese_schema, allow_unicode=True))
+print(f'Chinese supplemental phrases: {len(chinese_lines)}', flush=True)
+
 if english:
     write_atomic(root / f'{ENGLISH}.dict.yaml', dictionary)
     shutil.copyfile(english_src / f'{ENGLISH}.schema.yaml', root / f'{ENGLISH}.schema.yaml')
@@ -231,6 +268,8 @@ assert any(s.get('name') == 'simplified_output' and s.get('reset') == 1
 has_english = 'table_translator@english_words' in schema['engine']['translators']
 assert has_english == english, 'English translator state was not deployed'
 assert not english or (build / 'english_words.table.bin').exists(), 'English dictionary was not compiled'
+assert 'table_translator@common_phrases' in schema['engine']['translators'], 'Chinese translator missing'
+assert (build / 'common_phrases.table.bin').exists(), 'Chinese phrases were not compiled'
 print('Compiled configuration verified.')
 PY
 

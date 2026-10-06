@@ -130,8 +130,8 @@ class DeployTests(unittest.TestCase):
         self.assertTrue((self.user / 'english_words.schema.yaml').exists())
         compiled = self.compiled()
         self.assertEqual(compiled['engine']['translators'],
-                         ['punct_translator', 'script_translator', 'table_translator@english_words'])
-        self.assertEqual(compiled['schema']['dependencies'], ['stroke', 'english_words'])
+                         ['punct_translator', 'script_translator', 'table_translator@english_words', 'table_translator@common_phrases'])
+        self.assertEqual(compiled['schema']['dependencies'], ['stroke', 'english_words', 'common_phrases'])
         self.assertEqual(compiled['english_words']['initial_quality'], 0)
         custom = self.user / 'luna_pinyin_simp.custom.yaml'
         first = custom.read_text()
@@ -143,8 +143,8 @@ class DeployTests(unittest.TestCase):
         self.run_deploy('--no-restart', '--no-english')
         patch = self.load('luna_pinyin_simp.custom.yaml')['patch']
         self.assertNotIn('english_words', patch)
-        self.assertEqual(patch['engine/translators'], ['punct_translator', 'script_translator'])
-        self.assertEqual(patch['schema/dependencies'], ['stroke'])
+        self.assertEqual(patch['engine/translators'], ['punct_translator', 'script_translator', 'table_translator@common_phrases'])
+        self.assertEqual(patch['schema/dependencies'], ['stroke', 'common_phrases'])
         self.assertNotIn('table_translator@english_words', self.compiled()['engine']['translators'])
 
     def test_missing_wordlist_uses_builtin_words(self):
@@ -152,6 +152,24 @@ class DeployTests(unittest.TestCase):
         self.assertIn('only built-in', self.run_deploy('--no-restart').stdout)
         self.assertIn(('GitHub', 'github'), self.english_entries())
         self.assertNotIn(('hello', 'hello'), self.english_entries())
+
+    def test_chinese_phrases_and_abbreviations(self):
+        self.run_deploy('--no-restart')
+        dictionary = (self.user / 'common_phrases.dict.yaml').read_text()
+        for entry in ('没问题\tmeiwenti', '会议纪要\thuiyijiyao', '具身智能\tjushenzhineng'):
+            self.assertIn(entry, dictionary)
+        entries = self.english_entries()
+        for entry in [('ASAP', 'asap'), ('LGTM', 'lgtm'), ('FYI', 'fyi'), ('ROS2', 'rostwo'),
+                      ('IPv4', 'ipvfour'), ('IPv6', 'ipvsix'), ('B2B', 'btob')]:
+            self.assertIn(entry, entries)
+        self.assertEqual(len({code for _, code in entries}), len(entries))
+        self.assertTrue((self.user / 'build/common_phrases.table.bin').exists())
+        self.assertFalse(self.compiled()['common_phrases']['enable_completion'])
+
+    def test_chinese_works_without_english_from_fresh_install(self):
+        self.run_deploy('--no-restart', '--no-english')
+        self.assertIn('table_translator@common_phrases', self.compiled()['engine']['translators'])
+        self.assertNotIn('table_translator@english_words', self.compiled()['engine']['translators'])
 
     def test_set_default_moves_schema_first(self):
         self.run_deploy('--no-restart', '--set-default')
