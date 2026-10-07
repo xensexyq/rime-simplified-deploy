@@ -75,6 +75,13 @@ class CandidateTests(unittest.TestCase):
                          'ipvfour': 'IPv4', 'ipvsix': 'IPv6', 'rostwo': 'ROS2',
                          'btob': 'B2B', 'github': 'GitHub', 'women': '我们',
                          'nihao': '你好', 'zhongwen': '中文'}
+                # Every robotics/ML addition must actually appear in librime candidates.
+                text = (PACKAGE / 'english/words.txt').read_text()
+                for line in text.split('# 机器人、具身智能、仿真与训练生态\n', 1)[1].splitlines():
+                    if not line or line.startswith('#'):
+                        continue
+                    word, _, code = line.partition('\t')
+                    cases[code or word.lower()] = word
                 for code, expected in cases.items():
                     with self.subTest(code=code):
                         lib.RimeClearComposition(session)
@@ -88,7 +95,7 @@ class CandidateTests(unittest.TestCase):
                                 lib.RimeCandidateListEnd(C.byref(iterator))
                         print(f'{code}: {" | ".join(candidates[:5])}')
                         self.assertIn(expected, candidates)
-                        if code in ('women', 'nihao', 'zhongwen'):
+                        if code in ('women', 'nihao', 'zhongwen', 'lerobot'):
                             self.assertEqual(candidates[0], expected)
             finally:
                 lib.RimeDestroySession(session)

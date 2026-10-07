@@ -87,7 +87,7 @@ patch:
 
 ## 常用中文词组和英文缩写
 
-本项目内置 **147 条中文补充词组**和 **364 条英文词汇/缩写**，同时保留系统朙月拼音词库和原有用户学习记录。这是针对常见场景的补充词表，并非完整的现代汉语大词库。
+本项目内置 **147 条中文补充词组**和 **439 条英文词汇/缩写**，同时保留系统朙月拼音词库和原有用户学习记录。这是针对常见场景的补充词表，并非完整的现代汉语大词库。
 
 | 输入（小写连续输入） | 候选示例 |
 | --- | --- |
@@ -95,6 +95,8 @@ patch:
 | `huiyijiyao` / `xiangmujindu` | 会议纪要 / 项目进度 |
 | `shibangongbei` / `xunxujianjin` | 事半功倍 / 循序渐进 |
 | `rengongzhineng` / `jushenzhineng` | 人工智能 / 具身智能 |
+| `lerobot` / `smolvla` / `openvla` | LeRobot / SmolVLA / OpenVLA |
+| `mujoco` / `isaaclab` / `huggingface` | MuJoCo / IsaacLab / HuggingFace |
 | `asap` / `fyi` / `lgtm` | ASAP / FYI / LGTM |
 | `brb` / `tldr` / `idk` | BRB / TLDR / IDK |
 | `kpi` / `okr` / `sop` | KPI / OKR / SOP |
@@ -103,6 +105,8 @@ patch:
 中文补充采用完整拼音精确匹配，不额外注册中文首字母简码；原拼音方案仍正常工作。英文缩写输入其小写形式，输出词表里指定的大小写。候选排序会受既有配置和使用记录影响，不能保证所有缩写始终排第一。
 
 默认拼写器只接受字母，带数字的词使用明确别名：`ipvfour → IPv4`、`ipvsix → IPv6`、`rostwo → ROS2`、`btob → B2B`、`btoc → B2C`。数字键仍用于选词。
+
+机器人与训练生态还覆盖 LeRobotDataset、OpenPI、DiffusionPolicy、RoboSuite、ManiSkill、RealSense、MoveIt、WandB 等。带数字的新增名称使用 `openthreed → Open3D`、`hdffive → HDF5`、`hfivepy → h5py`。这些是词表精确匹配，不是任意英文名称识别，也不提供拼写纠错；未收录的新名称仍需补充。
 
 自行补充：
 

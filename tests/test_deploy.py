@@ -151,6 +151,8 @@ class DeployTests(unittest.TestCase):
         self.env['RIME_ENGLISH_WORDLIST'] = str(self.shared / 'missing')
         self.assertIn('only built-in', self.run_deploy('--no-restart').stdout)
         self.assertIn(('GitHub', 'github'), self.english_entries())
+        self.assertIn(('LeRobot', 'lerobot'), self.english_entries())
+        self.assertIn(('SmolVLA', 'smolvla'), self.english_entries())
         self.assertNotIn(('hello', 'hello'), self.english_entries())
 
     def test_chinese_phrases_and_abbreviations(self):
