@@ -1,4 +1,14 @@
-# Fcitx5 雾凇拼音术语增强部署
+<a id="fcitx5-雾凇拼音术语增强部署"></a>
+
+<div align="center">
+
+# rime-simplified-deploy
+
+**Fcitx5 + Rime + 雾凇拼音的中英文与工程术语增强**
+
+[特性](#特性) · [安装](#安装) · [快速开始](#快速开始) · [恢复](#恢复) · [测试](#测试)
+
+</div>
 
 面向 Linux 桌面的 **Fcitx5 + Rime + 雾凇拼音（rime_ice）**，把常用中文短语、英文单词以及机器人/AI 工程术语以独立词典挂载到现有方案。
 
@@ -6,56 +16,11 @@
 
 本项目不适用于 IBus、Windows 小狼毫或 macOS 鼠须管。
 
-## 快速开始
+## 特性
 
-先确认 Fcitx5 中已经能够正常使用[雾凇拼音](https://github.com/iDvel/rime-ice)，然后在已登录图形桌面的终端中以普通用户运行：
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/xensexyq/rime-simplified-deploy/main/install.sh)
-```
-
-`install.sh` 会：
-
-1. 检查 `fcitx5-remote`、`rime_deployer` 和 Python PyYAML；
-2. 在 Debian/Ubuntu 缺少依赖时安装 `fcitx5 fcitx5-rime librime-bin python3-yaml wamerican`；
-3. 确认默认用户目录中已经存在 `rime_ice.schema.yaml`；
-4. 下载本项目到 `~/.local/share/rime-simplified-deploy`；
-5. 增量修改 `rime_ice.custom.yaml`、重新部署并通知 Fcitx5 加载配置。
-
-安装器不会自动下载或覆盖雾凇拼音。已有项目下载目录会先改名备份，再安装新版本。
-
-已克隆仓库时可以直接运行：
-
-```bash
-git clone https://github.com/xensexyq/rime-simplified-deploy.git
-cd rime-simplified-deploy
-bash deploy.sh
-```
-
-## 参数
-
-| 参数 | 作用 |
-| --- | --- |
-| （无） | 生成补充词典、部署 Rime，并通过 `fcitx5-remote -r` 重新加载 |
-| `--no-reload` | 只部署，不重新加载 Fcitx5 |
-| `--set-default` | 将 `rime_ice` 放到 `default.custom.yaml` 方案列表第一位，其他方案保留 |
-| `--no-english` | 停用本项目的英文补充翻译器；中文补充仍保留 |
-| `-h`、`--help` | 显示帮助 |
-
-兼容旧调用的 `--no-restart` 会按 `--no-reload` 处理。
-
-## 环境变量
-
-| 变量 | 默认值 |
-| --- | --- |
-| `RIME_USER_DIR` | `${XDG_DATA_HOME:-~/.local/share}/fcitx5/rime` |
-| `RIME_SHARED_DIR` | `/usr/share/rime-data` |
-| `RIME_PYTHON` | `/usr/bin/python3` |
-| `RIME_ENGLISH_WORDLIST` | `/usr/share/dict/words` |
-| `FCITX5_REMOTE` | `fcitx5-remote` |
-| `RIME_DEPLOY_REPO` | `xensexyq/rime-simplified-deploy` |
-| `RIME_DEPLOY_BRANCH` | `main` |
-| `RIME_DEPLOY_HOME` | `~/.local/share/rime-simplified-deploy` |
+- 独立补充中文短语与英文工程术语，不替换雾凇主词库。
+- 增量挂载翻译器，保留用户学习数据和现有方案能力。
+- 修改前备份配置，支持暂不重载、关闭英文增强及手动恢复。
 
 ## 部署原理
 
@@ -84,6 +49,86 @@ table_translator@xense_common_phrases
 已有 `rime_ice.custom.yaml` 中的翻页键、方案名称和其他补丁会被保留。内容确实需要变化时，脚本先创建带时间戳的 `.bak-*` 备份；重复执行相同部署不会持续制造备份。
 
 首次写入会由 PyYAML 重新排版并移除原文件注释；修改前的原始文本完整保存在备份中。
+
+## 安装
+
+适用于 Linux 桌面的 Fcitx5；先安装雾凇拼音并确认可以正常输入。远程安装器可补齐 Debian/Ubuntu 系统依赖，但不会自动安装雾凇。其他系统请自行准备依赖。
+
+需要检查脚本后再部署时：
+
+```bash
+git clone https://github.com/xensexyq/rime-simplified-deploy.git
+cd rime-simplified-deploy
+```
+
+继续执行下方快速开始；部署会修改输入法配置，先提交或取消正在输入的内容。
+
+## 快速开始
+
+先确认 Fcitx5 中已经能够正常使用[雾凇拼音](https://github.com/iDvel/rime-ice)，然后在已登录图形桌面的终端中以普通用户运行：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/xensexyq/rime-simplified-deploy/main/install.sh)
+```
+
+`install.sh` 会：
+
+1. 检查 `fcitx5-remote`、`rime_deployer` 和 Python PyYAML；
+2. 在 Debian/Ubuntu 缺少依赖时安装 `fcitx5 fcitx5-rime librime-bin python3-yaml wamerican`；
+3. 确认默认用户目录中已经存在 `rime_ice.schema.yaml`；
+4. 下载本项目到 `~/.local/share/rime-simplified-deploy`；
+5. 增量修改 `rime_ice.custom.yaml`、重新部署并通知 Fcitx5 加载配置。
+
+安装器不会自动下载或覆盖雾凇拼音。已有项目下载目录会先改名备份，再安装新版本。
+
+已克隆仓库时可以直接运行：
+
+```bash
+git clone https://github.com/xensexyq/rime-simplified-deploy.git
+cd rime-simplified-deploy
+bash deploy.sh
+```
+
+## 项目结构
+
+```text
+install.sh     下载、检查依赖与安装入口
+deploy.sh      配置补丁、词典生成及 Rime 部署
+chinese/       中文补充短语
+english/       英文词汇与工程别名
+tests/         隔离配置及候选回归检查
+```
+
+## 文档
+
+[参数](#参数) · [环境变量](#环境变量) · [候选策略](#候选排序策略) · [词表维护](#词表) · [验证](#部署验证) · [恢复](#恢复) · [常见问题](#常见问题)
+
+详细操作集中在本 README，仓库名称保持兼容，不表示仍支持旧版 IBus 方案。
+
+## 参数
+
+| 参数 | 作用 |
+| --- | --- |
+| （无） | 生成补充词典、部署 Rime，并通过 `fcitx5-remote -r` 重新加载 |
+| `--no-reload` | 只部署，不重新加载 Fcitx5 |
+| `--set-default` | 将 `rime_ice` 放到 `default.custom.yaml` 方案列表第一位，其他方案保留 |
+| `--no-english` | 停用本项目的英文补充翻译器；中文补充仍保留 |
+| `-h`、`--help` | 显示帮助 |
+
+兼容旧调用的 `--no-restart` 会按 `--no-reload` 处理。
+
+## 环境变量
+
+| 变量 | 默认值 |
+| --- | --- |
+| `RIME_USER_DIR` | `${XDG_DATA_HOME:-~/.local/share}/fcitx5/rime` |
+| `RIME_SHARED_DIR` | `/usr/share/rime-data` |
+| `RIME_PYTHON` | `/usr/bin/python3` |
+| `RIME_ENGLISH_WORDLIST` | `/usr/share/dict/words` |
+| `FCITX5_REMOTE` | `fcitx5-remote` |
+| `RIME_DEPLOY_REPO` | `xensexyq/rime-simplified-deploy` |
+| `RIME_DEPLOY_BRANCH` | `main` |
+| `RIME_DEPLOY_HOME` | `~/.local/share/rime-simplified-deploy` |
 
 ## 候选排序策略
 
