@@ -22,7 +22,8 @@ case "$DEST" in
 esac
 
 runtime_ok() {
-  command -v fcitx5-remote >/dev/null && command -v rime_deployer >/dev/null     && "$python_bin" -c 'import yaml' 2>/dev/null
+  command -v fcitx5-remote >/dev/null && command -v rime_deployer >/dev/null \
+    && "$python_bin" -c 'import yaml' 2>/dev/null
 }
 
 if ! runtime_ok; then
@@ -36,7 +37,8 @@ if ! runtime_ok; then
   runtime_ok || die '依赖安装后仍不完整，请检查 fcitx5-remote、rime_deployer 和 python3-yaml。'
 fi
 
-[[ -f "$rime_dir/rime_ice.schema.yaml" ]]   || die "未检测到雾凇拼音：$rime_dir/rime_ice.schema.yaml。请先安装并部署 iDvel/rime-ice。"
+[[ -f "$rime_dir/rime_ice.schema.yaml" ]] \
+  || die "未检测到雾凇拼音：$rime_dir/rime_ice.schema.yaml。请先安装并部署 iDvel/rime-ice。"
 
 if [[ ! -f "${RIME_ENGLISH_WORDLIST:-/usr/share/dict/words}" ]] && command -v apt-get >/dev/null; then
   say '安装英文词表 wamerican（需要 sudo；失败时只启用内置英文术语）'
@@ -46,7 +48,8 @@ fi
 say "下载 $REPO@$BRANCH 到 $DEST"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-curl -fsSL "https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH"   | tar -xz -C "$tmp" --strip-components=1
+curl -fsSL "https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH" \
+  | tar -xz -C "$tmp" --strip-components=1
 
 mkdir -p "$(dirname "$DEST")"
 if [[ -e "$DEST" ]]; then
