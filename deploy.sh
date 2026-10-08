@@ -1,26 +1,28 @@
 #!/usr/bin/env bash
-# Configure simplified output for the IBus Rime luna_pinyin_simp schema.
+# Add Xense terminology dictionaries to an existing Fcitx5 Rime Ice setup.
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bash deploy.sh [--no-restart] [--set-default] [--no-english]
+Usage: bash deploy.sh [--no-reload] [--set-default] [--no-english]
 
-  --no-restart   Deploy only; run `ibus restart` yourself later.
-  --set-default  Also make luna_pinyin_simp the first schema in default.custom.yaml.
-  --no-english   Do not offer English word candidates (removes them if added before).
+  --no-reload   Deploy only; reload Fcitx5 yourself later.
+  --set-default Put rime_ice first in default.custom.yaml (other schemas are preserved).
+  --no-english  Disable this project's supplemental English candidates.
 
-Run as your desktop user. Requires IBus Rime, rime_deployer and python3-yaml.
-Environment overrides: RIME_USER_DIR, RIME_SHARED_DIR, RIME_PYTHON, RIME_ENGLISH_WORDLIST.
+Run as your desktop user. Requires Fcitx5 Rime, an existing Rime Ice installation,
+rime_deployer and python3-yaml.
+Environment overrides: RIME_USER_DIR, RIME_SHARED_DIR, RIME_PYTHON,
+RIME_ENGLISH_WORDLIST and FCITX5_REMOTE.
 EOF
 }
 
-restart=1
+reload=1
 set_default=0
 english=1
 for arg in "$@"; do
   case "$arg" in
-    --no-restart) restart=0 ;;
+    --no-reload|--no-restart) reload=0 ;;
     --set-default) set_default=1 ;;
     --no-english) english=0 ;;
     -h|--help) usage; exit 0 ;;
@@ -30,16 +32,21 @@ done
 [[ $EUID -ne 0 ]] || { echo 'Run as your desktop user, without sudo.' >&2; exit 1; }
 
 python_bin="${RIME_PYTHON:-/usr/bin/python3}"
-rime_dir="${RIME_USER_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/ibus/rime}"
+rime_dir="${RIME_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/fcitx5/rime}"
 shared_dir="${RIME_SHARED_DIR:-/usr/share/rime-data}"
 wordlist="${RIME_ENGLISH_WORDLIST:-/usr/share/dict/words}"
+fcitx5_remote="${FCITX5_REMOTE:-fcitx5-remote}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for command_name in rime_deployer ibus; do
-  command -v "$command_name" >/dev/null || { echo "Missing command: $command_name" >&2; exit 1; }
-done
+
+command -v rime_deployer >/dev/null || { echo 'Missing command: rime_deployer' >&2; exit 1; }
+if [[ $reload -eq 1 ]]; then
+  command -v "$fcitx5_remote" >/dev/null || { echo "Missing command: $fcitx5_remote" >&2; exit 1; }
+fi
 "$python_bin" -c 'import yaml' || { echo 'Install python3-yaml first.' >&2; exit 1; }
-[[ -f "$shared_dir/luna_pinyin_simp.schema.yaml" ]] || {
-  echo "Missing schema: $shared_dir/luna_pinyin_simp.schema.yaml" >&2; exit 1;
+[[ -f "$rime_dir/rime_ice.schema.yaml" ]] || {
+  echo "Missing Rime Ice schema: $rime_dir/rime_ice.schema.yaml" >&2
+  echo 'Install Rime Ice for Fcitx5 first, then run this script again.' >&2
+  exit 1
 }
 
 build() {
@@ -47,12 +54,12 @@ build() {
 }
 
 mkdir -p "$rime_dir"
-if [[ ! -f "$rime_dir/build/default.yaml" ]]; then
-  echo 'No compiled Rime configuration found; running initial deployment.'
+if [[ ! -f "$rime_dir/build/default.yaml" || ! -f "$rime_dir/build/rime_ice.schema.yaml" ]]; then
+  echo 'No compiled Rime Ice configuration found; running initial deployment.'
   build || { echo 'Initial deployment failed.' >&2; exit 1; }
 fi
 
-"$python_bin" - "$rime_dir" "$set_default" "$english" "$script_dir/english" "$wordlist" <<'PY'
+"$python_bin" - "$rime_dir" "$set_default" "$english" "$script_dir" "$wordlist" <<'PY'
 import datetime
 import os
 from pathlib import Path
@@ -60,17 +67,19 @@ import re
 import shutil
 import sys
 import tempfile
+
 import yaml
 
 root = Path(sys.argv[1])
 set_default = sys.argv[2] == '1'
 english = sys.argv[3] == '1'
-english_src = Path(sys.argv[4])
+source = Path(sys.argv[4])
 wordlist = Path(sys.argv[5])
-SCHEMA = 'luna_pinyin_simp'
-ENGLISH = 'english_words'
+
+SCHEMA = 'rime_ice'
+ENGLISH = 'xense_english_words'
 ENGLISH_TRANSLATOR = f'table_translator@{ENGLISH}'
-CHINESE = 'common_phrases'
+CHINESE = 'xense_common_phrases'
 CHINESE_TRANSLATOR = f'table_translator@{CHINESE}'
 
 
@@ -86,7 +95,7 @@ def load_mapping(path):
 
 
 def write_atomic(path, text, mode=0o644):
-    fd, temporary = tempfile.mkstemp(prefix='.simplified-', dir=root)
+    fd, temporary = tempfile.mkstemp(prefix='.xense-terms-', dir=root)
     try:
         with os.fdopen(fd, 'w') as stream:
             stream.write(text)
@@ -97,17 +106,55 @@ def write_atomic(path, text, mode=0o644):
             os.unlink(temporary)
 
 
+def save(path, data):
+    rendered = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    if path.exists() and path.read_text() == rendered:
+        print(f'Unchanged: {path}', flush=True)
+        return
+    if path.exists():
+        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+        backup = path.with_name(path.name + '.bak-' + stamp)
+        shutil.copy2(path, backup)
+        print(f'Backup: {backup}', flush=True)
+    fd, temporary = tempfile.mkstemp(prefix='.xense-terms-', dir=root)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(rendered)
+        if path.exists():
+            shutil.copymode(path, temporary)
+        else:
+            os.chmod(temporary, 0o644)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    print(f'Updated: {path}', flush=True)
+
+
+def dependency_schema(schema_id, name):
+    return {
+        'schema': {'schema_id': schema_id, 'name': name, 'version': '1'},
+        'engine': {
+            'processors': ['speller', 'selector', 'express_editor'],
+            'segmentors': ['abc_segmentor'],
+            'translators': ['table_translator'],
+        },
+        'speller': {'alphabet': 'zyxwvutsrqponmlkjihgfedcba'},
+        'translator': {'dictionary': schema_id},
+    }
+
+
 def english_dictionary():
-    # Built-in words come first and fix capitalization; the system list adds one
-    # entry per remaining code, preferring the lowercase spelling.
+    # Built-in entries fix capitalization and aliases. The optional system list
+    # contributes one spelling per remaining lowercase code.
     entries, seen = [], set()
-    for line in (english_src / 'words.txt').read_text().splitlines():
+    for line in (source / 'english/words.txt').read_text().splitlines():
         line = line.strip()
         if not line or line.startswith('#'):
             continue
         text, _, code = line.partition('\t')
         code = code.strip() or re.sub('[^a-z]', '', text.lower())
-        if not re.fullmatch('[a-z]+', code) or code in seen:
+        if not text.strip() or not re.fullmatch('[a-z]+', code) or code in seen:
             sys.exit(f'Invalid or duplicate English code: {code}; no files changed.')
         entries.append((text.strip(), code))
         seen.add(code)
@@ -121,35 +168,39 @@ def english_dictionary():
     else:
         print(f'Word list not found: {wordlist}; only built-in English words are enabled.', flush=True)
     entries += [(word, code) for code, word in system.items()]
-    header = ('# Generated by rime-simplified-deploy; changes are overwritten on the next run.\n'
+    header = ('# Generated by rime-simplified-deploy; edit english/words.txt instead.\n'
               f'---\nname: {ENGLISH}\nversion: "1"\nsort: original\n...\n\n')
     return header + ''.join(f'{text}\t{code}\n' for text, code in entries), len(entries)
 
 
-def save(path, data):
-    if path.exists():
-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
-        backup = path.with_name(path.name + '.bak-' + stamp)
-        shutil.copy2(path, backup)
-        print(f'Backup: {backup}', flush=True)
-    fd, temporary = tempfile.mkstemp(prefix='.simplified-', dir=root)
-    try:
-        with os.fdopen(fd, 'w') as stream:
-            yaml.safe_dump(data, stream, allow_unicode=True, sort_keys=False)
-        if path.exists():
-            shutil.copymode(path, temporary)
-        else:
-            os.chmod(temporary, 0o644)
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-    print(f'Updated: {path}', flush=True)
+def chinese_dictionary():
+    lines, seen_codes = [], set()
+    for line in (source / 'chinese/phrases.tsv').read_text(encoding='utf-8').splitlines():
+        if not line or line.startswith('#'):
+            continue
+        fields = line.split('\t')
+        if (len(fields) != 2 or not fields[0].strip() or
+                not re.fullmatch('[a-z]+', fields[1]) or fields[1] in seen_codes):
+            sys.exit(f'Invalid or duplicate Chinese entry: {line}; no files changed.')
+        seen_codes.add(fields[1])
+        lines.append(line)
+    header = ('# Generated by rime-simplified-deploy; edit chinese/phrases.tsv instead.\n'
+              f'---\nname: {CHINESE}\nversion: "1"\nsort: original\n...\n\n')
+    return header + '\n'.join(lines) + '\n', len(lines)
 
 
-# Validate everything before writing anything.
+def owned_append(patch, key, owned):
+    value = patch.get(key, [])
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        sys.exit(f'Unsupported {key} configuration; no files changed.')
+    return [item for item in value if item not in owned]
+
+
+# Validate the effective base configuration before writing anything.
+compiled = yaml.safe_load((root / f'build/{SCHEMA}.schema.yaml').read_text()) or {}
 defaults = yaml.safe_load((root / 'build/default.yaml').read_text()) or {}
 enabled = [item.get('schema') for item in defaults.get('schema_list', []) if isinstance(item, dict)]
+
 default_target = root / 'default.custom.yaml'
 default_data = None
 if set_default:
@@ -157,95 +208,71 @@ if set_default:
     schema_list = default_patch.get('schema_list')
     if schema_list is None:
         schema_list = [{'schema': name} for name in enabled]
-    if not isinstance(schema_list, list) or not all(isinstance(s, dict) for s in schema_list):
+    if not isinstance(schema_list, list) or not all(isinstance(item, dict) for item in schema_list):
         sys.exit('Unsupported schema_list in default.custom.yaml; no files changed.')
     default_patch['schema_list'] = [{'schema': SCHEMA}] + [
-        s for s in schema_list if s.get('schema') != SCHEMA]
+        item for item in schema_list if item.get('schema') != SCHEMA]
 elif SCHEMA not in enabled:
     sys.exit(f'{SCHEMA} is not enabled. Re-run with --set-default, or add it to '
              'schema_list in default.custom.yaml and deploy first.')
 
 target = root / f'{SCHEMA}.custom.yaml'
-created = not target.exists()
 data, patch = load_mapping(target)
-switches = patch.get('switches')
-if switches is None:
-    schema = yaml.safe_load((root / f'build/{SCHEMA}.schema.yaml').read_text())
-    switches = schema.get('switches', [])
-    if created:
-        # Drop the stock toggle that the dedicated switch below replaces.
-        old_option = (schema.get('simplifier') or {}).get('option_name')
-        switches = [s for s in switches if not isinstance(s, dict) or s.get('name') != old_option]
-if not isinstance(switches, list) or not all(isinstance(s, dict) for s in switches):
-    sys.exit('Unsupported switches configuration; no files changed.')
-patch['switches'] = [s for s in switches if s.get('name') != 'simplified_output']
-patch['switches'].append({'name': 'simplified_output', 'reset': 1})
-patch['simplifier/option_name'] = 'simplified_output'
-patch['simplifier/opencc_config'] = 't2s.json'
-
-
-def string_list(key, default):
-    value = patch[key] if key in patch else default
-    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-        sys.exit(f'Unsupported {key} configuration; no files changed.')
-    return [v for v in value if v not in (ENGLISH, ENGLISH_TRANSLATOR)]
-
+base_translators = (compiled.get('engine') or {}).get('translators')
+base_dependencies = (compiled.get('schema') or {}).get('dependencies') or []
+if (not isinstance(base_translators, list) or
+        not all(isinstance(item, str) for item in base_translators)):
+    sys.exit('Unsupported effective engine/translators configuration; no files changed.')
+if (not isinstance(base_dependencies, list) or
+        not all(isinstance(item, str) for item in base_dependencies)):
+    sys.exit('Unsupported effective schema/dependencies configuration; no files changed.')
+translators = owned_append(
+    patch, 'engine/translators/+',
+    {ENGLISH_TRANSLATOR, CHINESE_TRANSLATOR})
+dependencies = owned_append(
+    patch, 'schema/dependencies/+',
+    {ENGLISH, CHINESE})
 
 if english:
-    compiled = yaml.safe_load((root / f'build/{SCHEMA}.schema.yaml').read_text()) or {}
-    patch['engine/translators'] = string_list(
-        'engine/translators', (compiled.get('engine') or {}).get('translators')) + [ENGLISH_TRANSLATOR]
-    patch['schema/dependencies'] = string_list(
-        'schema/dependencies', (compiled.get('schema') or {}).get('dependencies') or []) + [ENGLISH]
-    # Quality 0 keeps Chinese first for complete pinyin (women, fan) while
-    # non-pinyin words (hello, github) rank first.
-    patch[ENGLISH] = {'dictionary': ENGLISH, 'enable_completion': False, 'enable_sentence': False,
-                      'enable_user_dict': False, 'enable_encoder': False, 'initial_quality': 0}
-    dictionary, count = english_dictionary()
+    translators.append(ENGLISH_TRANSLATOR)
+    dependencies.append(ENGLISH)
+    patch[ENGLISH] = {
+        'dictionary': ENGLISH,
+        'enable_completion': False,
+        'enable_sentence': False,
+        'enable_user_dict': False,
+        'enable_encoder': False,
+        # Keep exact English terms behind valid Chinese pinyin.
+        'initial_quality': 0,
+    }
+    english_dict, english_count = english_dictionary()
 else:
-    for key in ('engine/translators', 'schema/dependencies'):
-        if key in patch:
-            patch[key] = string_list(key, None)
     patch.pop(ENGLISH, None)
+    english_dict, english_count = None, 0
 
-# An independent exact-match table supplements the stock Chinese dictionary.
-# Keep the primary translator and its user database unchanged.
-compiled = yaml.safe_load((root / f'build/{SCHEMA}.schema.yaml').read_text()) or {}
-for key, fallback, entry in (
-    ('engine/translators', (compiled.get('engine') or {}).get('translators'), CHINESE_TRANSLATOR),
-    ('schema/dependencies', (compiled.get('schema') or {}).get('dependencies') or [], CHINESE),
-):
-    values = patch.get(key, fallback)
-    if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
-        sys.exit(f'Unsupported {key}; no files changed.')
-    patch[key] = [v for v in values if v != entry] + [entry]
-patch[CHINESE] = {'dictionary': CHINESE, 'enable_completion': False,
-                  'enable_sentence': False, 'enable_user_dict': False, 'initial_quality': 1}
-chinese_lines, seen = [], set()
-for line in (english_src.parent / 'chinese/phrases.tsv').read_text(encoding='utf-8').splitlines():
-    if not line or line.startswith('#'):
-        continue
-    fields = line.split('\t')
-    if len(fields) != 2 or not re.fullmatch('[a-z]+', fields[1]) or tuple(fields) in seen:
-        sys.exit(f'Invalid or duplicate Chinese entry: {line}; no files changed.')
-    seen.add(tuple(fields))
-    chinese_lines.append(line)
-chinese_dict = (f'# Generated supplemental phrases; edit chinese/phrases.tsv instead.\n'
-                f'---\nname: {CHINESE}\nversion: "1"\nsort: original\n...\n\n'
-                + '\n'.join(chinese_lines) + '\n')
-chinese_schema = {'schema': {'schema_id': CHINESE, 'name': '常用中文词组', 'version': '1'},
-                  'engine': {'processors': ['speller', 'selector', 'express_editor'],
-                             'segmentors': ['abc_segmentor'], 'translators': ['table_translator']},
-                  'speller': {'alphabet': 'abcdefghijklmnopqrstuvwxyz'},
-                  'translator': {'dictionary': CHINESE}}
+translators.append(CHINESE_TRANSLATOR)
+dependencies.append(CHINESE)
+patch['engine/translators/+'] = translators
+patch['schema/dependencies/+'] = dependencies
+patch[CHINESE] = {
+    'dictionary': CHINESE,
+    'enable_completion': False,
+    'enable_sentence': False,
+    'enable_user_dict': False,
+    # Rime Ice's primary translator remains higher at 1.2.
+    'initial_quality': 1,
+}
+chinese_dict, chinese_count = chinese_dictionary()
+
 write_atomic(root / f'{CHINESE}.dict.yaml', chinese_dict)
-write_atomic(root / f'{CHINESE}.schema.yaml', yaml.safe_dump(chinese_schema, allow_unicode=True))
-print(f'Chinese supplemental phrases: {len(chinese_lines)}', flush=True)
-
+write_atomic(root / f'{CHINESE}.schema.yaml', yaml.safe_dump(
+    dependency_schema(CHINESE, 'Xense 常用中文词组'), allow_unicode=True, sort_keys=False))
+print(f'Chinese supplemental phrases: {chinese_count}', flush=True)
 if english:
-    write_atomic(root / f'{ENGLISH}.dict.yaml', dictionary)
-    shutil.copyfile(english_src / f'{ENGLISH}.schema.yaml', root / f'{ENGLISH}.schema.yaml')
-    print(f'English words: {count}', flush=True)
+    write_atomic(root / f'{ENGLISH}.dict.yaml', english_dict)
+    write_atomic(root / f'{ENGLISH}.schema.yaml', yaml.safe_dump(
+        dependency_schema(ENGLISH, 'Xense English Words'), allow_unicode=True, sort_keys=False))
+    print(f'English words: {english_count}', flush=True)
 if default_data is not None:
     save(default_target, default_data)
 save(target, data)
@@ -258,32 +285,38 @@ fi
 "$python_bin" - "$rime_dir/build" "$english" <<'PY'
 from pathlib import Path
 import sys
+
 import yaml
+
 build, english = Path(sys.argv[1]), sys.argv[2] == '1'
-schema = yaml.safe_load((build / 'luna_pinyin_simp.schema.yaml').read_text())
-assert schema['simplifier']['option_name'] == 'simplified_output', 'Option was not deployed'
-assert schema['simplifier']['opencc_config'] == 't2s.json', 'Conversion rule was not deployed'
-assert any(s.get('name') == 'simplified_output' and s.get('reset') == 1
-           for s in schema['switches']), 'Default-on switch was not deployed'
-has_english = 'table_translator@english_words' in schema['engine']['translators']
-assert has_english == english, 'English translator state was not deployed'
-assert not english or (build / 'english_words.table.bin').exists(), 'English dictionary was not compiled'
-assert 'table_translator@common_phrases' in schema['engine']['translators'], 'Chinese translator missing'
-assert (build / 'common_phrases.table.bin').exists(), 'Chinese phrases were not compiled'
-print('Compiled configuration verified.')
+schema = yaml.safe_load((build / 'rime_ice.schema.yaml').read_text())
+translators = schema['engine']['translators']
+dependencies = schema['schema'].get('dependencies', [])
+english_translator = 'table_translator@xense_english_words'
+assert (english_translator in translators) == english, 'English translator state was not deployed'
+assert ('xense_english_words' in dependencies) == english, 'English dependency state was not deployed'
+assert not english or (build / 'xense_english_words.table.bin').exists(), 'English dictionary was not compiled'
+assert 'table_translator@xense_common_phrases' in translators, 'Chinese translator missing'
+assert 'xense_common_phrases' in dependencies, 'Chinese dependency missing'
+assert (build / 'xense_common_phrases.table.bin').exists(), 'Chinese phrases were not compiled'
+print('Compiled Rime Ice configuration verified.')
 PY
 
-if [[ $restart -eq 0 ]]; then
-  echo 'Deployment complete. Run ibus restart when ready, then select the simplified Pinyin schema.'
+if [[ $reload -eq 0 ]]; then
+  echo 'Deployment complete. Reload Fcitx5 before testing the new candidates.'
   exit 0
 fi
-ibus restart
-for attempt in {1..15}; do
-  if ibus engine rime >/dev/null 2>&1 && [[ "$(ibus engine 2>/dev/null)" == rime ]]; then
-    echo 'Rime is running. Select 拼音（简体） if needed, then test: 中文输入法.'
+
+if ! "$fcitx5_remote" -r; then
+  echo 'Configuration deployed, but Fcitx5 could not be reloaded. See README.md.' >&2
+  exit 1
+fi
+for attempt in {1..5}; do
+  current="$($fcitx5_remote -n 2>/dev/null || true)"
+  if [[ "$current" == rime ]]; then
+    echo 'Rime Ice terminology deployed and Fcitx5 reloaded.'
     exit 0
   fi
   sleep 1
 done
-echo 'Configuration deployed, but IBus could not be confirmed ready. See README.md.' >&2
-exit 1
+echo 'Configuration deployed and Fcitx5 reloaded; select Rime before testing candidates.'

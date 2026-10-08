@@ -1,4 +1,4 @@
-"""Isolated tests for deploy.sh: fake rime_deployer/ibus, temporary Rime directories."""
+"""Isolated tests for Fcitx5 + Rime Ice deployment."""
 import os
 from pathlib import Path
 import subprocess
@@ -11,8 +11,8 @@ import yaml
 
 PACKAGE = Path(__file__).resolve().parents[1]
 
-# Minimal stand-in for rime_deployer: applies "patch" (with a/b key paths) from
-# <name>.custom.yaml onto the shared <name>.yaml / <name>.schema.yaml.
+# Minimal stand-in for rime_deployer: applies slash-delimited patch keys from
+# user custom files to shared/user schemas and creates dependency table markers.
 FAKE_DEPLOYER = textwrap.dedent('''\
     #!{python}
     import sys, yaml
@@ -20,32 +20,55 @@ FAKE_DEPLOYER = textwrap.dedent('''\
     assert sys.argv[1] == '--build'
     user, shared, build = map(Path, sys.argv[2:5])
     build.mkdir(parents=True, exist_ok=True)
-    for source in shared.glob('*.yaml'):
+    sources = list(shared.glob('*.yaml')) + list(user.glob('*.schema.yaml'))
+    for source in sources:
         data = yaml.safe_load(source.read_text()) or {{}}
         stem = source.name.split('.')[0]
         custom = user / (stem + '.custom.yaml')
         if custom.exists():
             for key, value in (yaml.safe_load(custom.read_text()) or {{}}).get('patch', {{}}).items():
-                node, parts = data, key.split('/')
-                for part in parts[:-1]:
-                    node = node.setdefault(part, {{}})
-                node[parts[-1]] = value
+                parts = key.split('/')
+                node = data
+                if parts[-1] == '+':
+                    for part in parts[:-2]:
+                        node = node.setdefault(part, {{}})
+                    target = parts[-2]
+                    current = node.setdefault(target, [])
+                    assert isinstance(current, list) and isinstance(value, list)
+                    node[target] = current + value
+                else:
+                    for part in parts[:-1]:
+                        node = node.setdefault(part, {{}})
+                    node[parts[-1]] = value
         (build / source.name).write_text(yaml.safe_dump(data, allow_unicode=True))
         for dependency in (data.get('schema') or {{}}).get('dependencies') or []:
             if (user / (dependency + '.schema.yaml')).exists():
                 (build / (dependency + '.table.bin')).write_text('')
 ''')
 
-SHARED_SCHEMA = {
-    'schema': {'schema_id': 'luna_pinyin_simp', 'name': '朙月拼音·简化字', 'dependencies': ['stroke']},
-    'engine': {'translators': ['punct_translator', 'script_translator']},
+RIME_SCHEMA = {
+    'schema': {
+        'schema_id': 'rime_ice',
+        'name': '雾凇拼音',
+        'dependencies': ['melt_eng', 'radical_pinyin'],
+    },
+    'engine': {
+        'translators': [
+            'punct_translator',
+            'script_translator',
+            'table_translator@melt_eng',
+        ],
+        'filters': ['simplifier@traditionalize', 'uniquifier'],
+    },
     'switches': [
-        {'name': 'ascii_mode', 'reset': 0, 'states': ['中文', '西文']},
-        {'name': 'zh_simp', 'reset': 1, 'states': ['漢字', '汉字']},
+        {'name': 'ascii_mode', 'states': ['中', 'Ａ']},
+        {'name': 'traditionalization', 'states': ['简', '繁']},
     ],
-    'simplifier': {'option_name': 'zh_simp'},
+    'traditionalize': {'option_name': 'traditionalization', 'opencc_config': 's2t.json'},
 }
-SHARED_DEFAULT = {'schema_list': [{'schema': 'luna_pinyin'}, {'schema': 'luna_pinyin_simp'}]}
+SHARED_DEFAULT = {
+    'schema_list': [{'schema': 'rime_ice'}, {'schema': 'double_pinyin_flypy'}],
+}
 
 
 class DeployTests(unittest.TestCase):
@@ -55,26 +78,47 @@ class DeployTests(unittest.TestCase):
         base = Path(temp.name)
         self.user = base / 'user dir/rime'
         self.shared = base / 'shared'
+        self.user.mkdir(parents=True)
         self.shared.mkdir()
-        (self.shared / 'luna_pinyin_simp.schema.yaml').write_text(yaml.safe_dump(SHARED_SCHEMA, allow_unicode=True))
-        (self.shared / 'default.yaml').write_text(yaml.safe_dump(SHARED_DEFAULT))
+        (self.user / 'rime_ice.schema.yaml').write_text(
+            yaml.safe_dump(RIME_SCHEMA, allow_unicode=True))
+        (self.shared / 'default.yaml').write_text(
+            yaml.safe_dump(SHARED_DEFAULT, allow_unicode=True))
+
         bin_dir = base / 'bin'
         bin_dir.mkdir()
         deployer = bin_dir / 'rime_deployer'
         deployer.write_text(FAKE_DEPLOYER.format(python=sys.executable))
-        ibus = bin_dir / 'ibus'
-        ibus.write_text('#!/bin/sh\n[ "$1 $2" = "engine rime" ] && exit 0\n[ "$1" = engine ] && echo rime\nexit 0\n')
-        for tool in (deployer, ibus):
+        self.fcitx_log = base / 'fcitx.log'
+        fcitx = bin_dir / 'fcitx5-remote'
+        fcitx.write_text(textwrap.dedent('''\
+            #!/bin/sh
+            printf '%s\\n' "$*" >> "$FCITX_LOG"
+            [ "$1" = "-n" ] && printf '%s\\n' rime
+            exit 0
+        '''))
+        for tool in (deployer, fcitx):
             tool.chmod(0o755)
+
         wordlist = base / 'words'
         wordlist.write_text("hello\nHello\nPolish\nlinux\nit's\na\nmake\n")
-        self.env = dict(os.environ, PATH=f'{bin_dir}:{os.environ["PATH"]}', RIME_USER_DIR=str(self.user),
-                        RIME_SHARED_DIR=str(self.shared), RIME_PYTHON=sys.executable,
-                        RIME_ENGLISH_WORDLIST=str(wordlist))
+        self.env = dict(
+            os.environ,
+            PATH=f'{bin_dir}:{os.environ["PATH"]}',
+            RIME_USER_DIR=str(self.user),
+            RIME_SHARED_DIR=str(self.shared),
+            RIME_PYTHON=sys.executable,
+            RIME_ENGLISH_WORDLIST=str(wordlist),
+            FCITX_LOG=str(self.fcitx_log),
+        )
 
     def run_deploy(self, *args, check=True):
-        result = subprocess.run(['bash', str(PACKAGE / 'deploy.sh'), *args], env=self.env,
-                                capture_output=True, text=True)
+        result = subprocess.run(
+            ['bash', str(PACKAGE / 'deploy.sh'), *args],
+            env=self.env,
+            capture_output=True,
+            text=True,
+        )
         if check:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
@@ -83,120 +127,161 @@ class DeployTests(unittest.TestCase):
         return yaml.safe_load((self.user / path).read_text())
 
     def compiled(self):
-        return self.load('build/luna_pinyin_simp.schema.yaml')
-
-    def test_fresh_install_creates_config(self):
-        output = self.run_deploy().stdout
-        self.assertIn('initial deployment', output)
-        self.assertIn('Rime is running', output)
-        patch = self.load('luna_pinyin_simp.custom.yaml')['patch']
-        self.assertEqual([s['name'] for s in patch['switches']], ['ascii_mode', 'simplified_output'])
-        self.assertEqual(self.compiled()['simplifier'], {'option_name': 'simplified_output', 'opencc_config': 't2s.json'})
-        self.assertEqual(list(self.user.glob('*.bak-*')), [])
-
-    def test_existing_config_is_preserved_backed_up_and_idempotent(self):
-        self.user.mkdir(parents=True)
-        custom = self.user / 'luna_pinyin_simp.custom.yaml'
-        custom.write_text(yaml.safe_dump({'patch': {
-            'schema/name': '拼音（简体）',
-            'switches': [{'name': 'full_shape'}, {'name': 'simplified_output', 'reset': 0}],
-            'simplifier/option_name': ''}}, allow_unicode=True))
-        original = custom.read_text()
-        self.run_deploy('--no-restart')
-        patch = self.load('luna_pinyin_simp.custom.yaml')['patch']
-        self.assertEqual(patch['schema/name'], '拼音（简体）')
-        self.assertEqual(patch['switches'], [{'name': 'full_shape'}, {'name': 'simplified_output', 'reset': 1}])
-        backups = list(self.user.glob('luna_pinyin_simp.custom.yaml.bak-*'))
-        self.assertEqual([b.read_text() for b in backups], [original])
-        first = custom.read_text()
-        self.run_deploy('--no-restart')
-        self.assertEqual(custom.read_text(), first)
+        return self.load('build/rime_ice.schema.yaml')
 
     def english_entries(self):
-        lines = (self.user / 'english_words.dict.yaml').read_text().split('...\n', 1)[1].split('\n')
-        return [tuple(line.split('\t')) for line in lines if line]
+        body = (self.user / 'xense_english_words.dict.yaml').read_text().split('...\n', 1)[1]
+        return [tuple(line.split('\t')) for line in body.splitlines() if line]
 
-    def test_english_words_enabled_and_idempotent(self):
-        self.run_deploy('--no-restart')
+    def test_fresh_install_preserves_rime_ice_behavior(self):
+        output = self.run_deploy('--no-reload').stdout
+        self.assertIn('initial deployment', output)
+        self.assertIn('Compiled Rime Ice configuration verified', output)
+        patch = self.load('rime_ice.custom.yaml')['patch']
+        self.assertNotIn('switches', patch)
+        self.assertNotIn('simplifier/option_name', patch)
+        self.assertEqual(
+            patch['engine/translators/+'][-2:],
+            ['table_translator@xense_english_words',
+             'table_translator@xense_common_phrases'],
+        )
+        self.assertEqual(
+            patch['schema/dependencies/+'][-2:],
+            ['xense_english_words', 'xense_common_phrases'],
+        )
+        compiled = self.compiled()
+        self.assertEqual(
+            compiled['traditionalize'],
+            {'option_name': 'traditionalization', 'opencc_config': 's2t.json'},
+        )
+        self.assertEqual(compiled['switches'], RIME_SCHEMA['switches'])
+
+    def test_existing_config_is_preserved_backed_up_and_idempotent(self):
+        custom = self.user / 'rime_ice.custom.yaml'
+        custom.write_text(yaml.safe_dump({'patch': {
+            'schema/name': '我的雾凇',
+            'engine/translators/+': ['table_translator@my_terms'],
+            'key_binder/bindings/+': [
+                {'when': 'has_menu', 'accept': 'comma', 'send': 'Page_Up'},
+            ],
+        }}, allow_unicode=True))
+        original = custom.read_text()
+        self.run_deploy('--no-reload')
+        patch = self.load('rime_ice.custom.yaml')['patch']
+        self.assertEqual(patch['schema/name'], '我的雾凇')
+        self.assertEqual(patch['key_binder/bindings/+'][0]['accept'], 'comma')
+        self.assertEqual(
+            patch['engine/translators/+'][0],
+            'table_translator@my_terms')
+        backups = list(self.user.glob('rime_ice.custom.yaml.bak-*'))
+        self.assertEqual([backup.read_text() for backup in backups], [original])
+        first = custom.read_text()
+        self.run_deploy('--no-reload')
+        self.assertEqual(custom.read_text(), first)
+        self.assertEqual(len(list(self.user.glob('rime_ice.custom.yaml.bak-*'))), 1)
+
+    def test_english_words_enabled(self):
+        self.run_deploy('--no-reload')
         entries = self.english_entries()
         self.assertIn(('GitHub', 'github'), entries)
         self.assertIn(('Node.js', 'nodejs'), entries)
         self.assertIn(('hello', 'hello'), entries)
         self.assertIn(('Polish', 'polish'), entries)
-        self.assertIn(('make', 'make'), entries)
         self.assertNotIn(('Hello', 'hello'), entries)
         self.assertNotIn(('linux', 'linux'), entries)
-        self.assertFalse({'a', "it's"} & {code for _, code in entries})
-        self.assertTrue((self.user / 'english_words.schema.yaml').exists())
         compiled = self.compiled()
-        self.assertEqual(compiled['engine']['translators'],
-                         ['punct_translator', 'script_translator', 'table_translator@english_words', 'table_translator@common_phrases'])
-        self.assertEqual(compiled['schema']['dependencies'], ['stroke', 'english_words', 'common_phrases'])
-        self.assertEqual(compiled['english_words']['initial_quality'], 0)
-        custom = self.user / 'luna_pinyin_simp.custom.yaml'
-        first = custom.read_text()
-        self.run_deploy('--no-restart')
-        self.assertEqual(custom.read_text(), first)
+        self.assertIn(
+            'table_translator@xense_english_words',
+            compiled['engine']['translators'],
+        )
+        self.assertEqual(compiled['xense_english_words']['initial_quality'], 0)
+        self.assertTrue((self.user / 'build/xense_english_words.table.bin').exists())
 
     def test_no_english_removes_previous_setup(self):
-        self.run_deploy('--no-restart')
-        self.run_deploy('--no-restart', '--no-english')
-        patch = self.load('luna_pinyin_simp.custom.yaml')['patch']
-        self.assertNotIn('english_words', patch)
-        self.assertEqual(patch['engine/translators'], ['punct_translator', 'script_translator', 'table_translator@common_phrases'])
-        self.assertEqual(patch['schema/dependencies'], ['stroke', 'common_phrases'])
-        self.assertNotIn('table_translator@english_words', self.compiled()['engine']['translators'])
+        self.run_deploy('--no-reload')
+        self.run_deploy('--no-reload', '--no-english')
+        patch = self.load('rime_ice.custom.yaml')['patch']
+        self.assertNotIn('xense_english_words', patch)
+        self.assertNotIn(
+            'table_translator@xense_english_words',
+            patch['engine/translators/+'],
+        )
+        self.assertNotIn('xense_english_words', patch['schema/dependencies/+'])
+        self.assertNotIn(
+            'table_translator@xense_english_words',
+            self.compiled()['engine']['translators'],
+        )
+        self.assertIn(
+            'table_translator@xense_common_phrases',
+            self.compiled()['engine']['translators'],
+        )
 
     def test_missing_wordlist_uses_builtin_words(self):
         self.env['RIME_ENGLISH_WORDLIST'] = str(self.shared / 'missing')
-        self.assertIn('only built-in', self.run_deploy('--no-restart').stdout)
-        self.assertIn(('GitHub', 'github'), self.english_entries())
-        self.assertIn(('LeRobot', 'lerobot'), self.english_entries())
-        self.assertIn(('SmolVLA', 'smolvla'), self.english_entries())
-        self.assertNotIn(('hello', 'hello'), self.english_entries())
+        output = self.run_deploy('--no-reload').stdout
+        self.assertIn('only built-in English words', output)
+        entries = self.english_entries()
+        self.assertIn(('GitHub', 'github'), entries)
+        self.assertIn(('LeRobot', 'lerobot'), entries)
+        self.assertNotIn(('hello', 'hello'), entries)
 
-    def test_chinese_phrases_and_abbreviations(self):
-        self.run_deploy('--no-restart')
-        dictionary = (self.user / 'common_phrases.dict.yaml').read_text()
-        for entry in ('没问题\tmeiwenti', '会议纪要\thuiyijiyao', '具身智能\tjushenzhineng'):
+    def test_chinese_phrases_and_domain_terms(self):
+        self.run_deploy('--no-reload')
+        dictionary = (self.user / 'xense_common_phrases.dict.yaml').read_text()
+        for entry in ('没问题\tmeiwenti', '会议纪要\thuiyijiyao', '手眼标定\tshouyanbiaoding'):
             self.assertIn(entry, dictionary)
         entries = self.english_entries()
-        for entry in [('ASAP', 'asap'), ('LGTM', 'lgtm'), ('FYI', 'fyi'), ('ROS2', 'rostwo'),
-                      ('IPv4', 'ipvfour'), ('IPv6', 'ipvsix'), ('B2B', 'btob')]:
+        for entry in [('ROS2', 'rostwo'), ('LeRobot', 'lerobot'),
+                      ('Xense', 'xense'), ('TacCap', 'taccap')]:
             self.assertIn(entry, entries)
-        self.assertEqual(len({code for _, code in entries}), len(entries))
-        self.assertTrue((self.user / 'build/common_phrases.table.bin').exists())
-        self.assertFalse(self.compiled()['common_phrases']['enable_completion'])
+        self.assertTrue((self.user / 'build/xense_common_phrases.table.bin').exists())
+        self.assertFalse(self.compiled()['xense_common_phrases']['enable_completion'])
 
-    def test_chinese_works_without_english_from_fresh_install(self):
-        self.run_deploy('--no-restart', '--no-english')
-        self.assertIn('table_translator@common_phrases', self.compiled()['engine']['translators'])
-        self.assertNotIn('table_translator@english_words', self.compiled()['engine']['translators'])
-
-    def test_set_default_moves_schema_first(self):
-        self.run_deploy('--no-restart', '--set-default')
-        schemas = [s['schema'] for s in self.load('default.custom.yaml')['patch']['schema_list']]
-        self.assertEqual(schemas, ['luna_pinyin_simp', 'luna_pinyin'])
+    def test_set_default_moves_rime_ice_first(self):
+        (self.shared / 'default.yaml').write_text(yaml.safe_dump({
+            'schema_list': [
+                {'schema': 'double_pinyin_flypy'},
+                {'schema': 'rime_ice'},
+            ],
+        }))
+        self.run_deploy('--no-reload', '--set-default')
+        schemas = [
+            item['schema']
+            for item in self.load('default.custom.yaml')['patch']['schema_list']
+        ]
+        self.assertEqual(schemas, ['rime_ice', 'double_pinyin_flypy'])
 
     def test_disabled_schema_fails_without_changes(self):
-        (self.shared / 'default.yaml').write_text(yaml.safe_dump({'schema_list': [{'schema': 'luna_pinyin'}]}))
-        result = self.run_deploy('--no-restart', check=False)
+        (self.shared / 'default.yaml').write_text(yaml.safe_dump({
+            'schema_list': [{'schema': 'double_pinyin_flypy'}],
+        }))
+        result = self.run_deploy('--no-reload', check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('--set-default', result.stderr)
-        self.assertFalse((self.user / 'luna_pinyin_simp.custom.yaml').exists())
+        self.assertFalse((self.user / 'rime_ice.custom.yaml').exists())
+        self.assertFalse((self.user / 'xense_common_phrases.dict.yaml').exists())
 
-    def test_invalid_switches_fail_without_changes(self):
-        self.user.mkdir(parents=True)
-        custom = self.user / 'luna_pinyin_simp.custom.yaml'
-        custom.write_text('patch:\n  switches: oops\n')
-        result = self.run_deploy('--no-restart', check=False)
+    def test_invalid_translators_fail_without_changes(self):
+        custom = self.user / 'rime_ice.custom.yaml'
+        custom.write_text('patch:\n  engine/translators: oops\n')
+        result = self.run_deploy('--no-reload', check=False)
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(custom.read_text(), 'patch:\n  switches: oops\n')
-        self.assertEqual(list(self.user.glob('*.bak-*')), [])
+        self.assertEqual(
+            custom.read_text(),
+            'patch:\n  engine/translators: oops\n',
+        )
+        self.assertFalse((self.user / 'xense_common_phrases.dict.yaml').exists())
+
+    def test_reload_uses_fcitx5_remote(self):
+        output = self.run_deploy().stdout
+        self.assertIn('Fcitx5 reloaded', output)
+        self.assertEqual(self.fcitx_log.read_text().splitlines(), ['-r', '-n'])
 
     def test_bad_arguments(self):
         self.assertEqual(self.run_deploy('--bogus', check=False).returncode, 2)
-        self.assertIn('--set-default', self.run_deploy('--help').stdout)
+        help_result = self.run_deploy('--help')
+        self.assertIn('--no-reload', help_result.stdout)
+        self.assertIn('--set-default', help_result.stdout)
 
 
 if __name__ == '__main__':

@@ -1,198 +1,202 @@
-# IBus Rime 简体中文一键部署
+# Fcitx5 雾凇拼音术语增强部署
 
-在 Linux 桌面（**IBus + Rime**）上一键配置“朙月拼音·简化字”方案 `luna_pinyin_simp`：
+面向 Linux 桌面的 **Fcitx5 + Rime + 雾凇拼音（rime_ice）**，把常用中文短语、英文单词以及机器人/AI 工程术语以独立词典挂载到现有方案。
 
-- **稳定输出简体中文**：修复“简体方案却出繁体”的问题。
-- **常用中文词组**：补充日常交流、办公、成语和技术词组，例如“没问题”“会议纪要”“具身智能”。
-- **英文单词候选**：不切换中英文就能直接打出 `hello`、`GitHub`、`JSON` 等常用英文。
+项目不会替换雾凇拼音主词库，不会清空用户目录，也不会修改用户词频数据库。雾凇已有的候选排序、自动纠错、中英混输、Emoji、拆字、标点和快捷键继续保留。
 
-不适用于 Fcitx、Windows 小狼毫或 macOS 鼠须管。
+本项目不适用于 IBus、Windows 小狼毫或 macOS 鼠须管。
 
 ## 快速开始
 
-在已登录图形桌面的终端中以**普通用户**运行（不要 sudo）：
+先确认 Fcitx5 中已经能够正常使用[雾凇拼音](https://github.com/iDvel/rime-ice)，然后在已登录图形桌面的终端中以普通用户运行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/xensexyq/rime-simplified-deploy/main/install.sh) --set-default
+bash <(curl -fsSL https://raw.githubusercontent.com/xensexyq/rime-simplified-deploy/main/install.sh)
 ```
 
 `install.sh` 会：
 
-1. 检查依赖；缺少时在 Debian/Ubuntu 上通过 `apt` 安装 `ibus ibus-rime librime-bin rime-data-luna-pinyin python3-yaml wamerican`（会请求 sudo）。其他发行版请先用系统包管理器手动安装对应软件包。
-2. 下载本仓库到 `~/.local/share/rime-simplified-deploy`。
-3. 执行 `deploy.sh`，参数原样传入。
+1. 检查 `fcitx5-remote`、`rime_deployer` 和 Python PyYAML；
+2. 在 Debian/Ubuntu 缺少依赖时安装 `fcitx5 fcitx5-rime librime-bin python3-yaml wamerican`；
+3. 确认默认用户目录中已经存在 `rime_ice.schema.yaml`；
+4. 下载本项目到 `~/.local/share/rime-simplified-deploy`；
+5. 增量修改 `rime_ice.custom.yaml`、重新部署并通知 Fcitx5 加载配置。
 
-已克隆仓库时也可以直接运行：
+安装器不会自动下载或覆盖雾凇拼音。已有项目下载目录会先改名备份，再安装新版本。
+
+已克隆仓库时可以直接运行：
 
 ```bash
 git clone https://github.com/xensexyq/rime-simplified-deploy.git
 cd rime-simplified-deploy
-bash deploy.sh --set-default
+bash deploy.sh
 ```
-
-> 新装 IBus Rime 时，还需要在系统设置的“键盘 / 输入源”中添加“中文（Rime）”。脚本只会启用 Rime 引擎，不会修改桌面的输入源列表或系统界面语言。
 
 ## 参数
 
 | 参数 | 作用 |
 | --- | --- |
-| （无） | 修改配置、重新部署、重启 IBus 并确认 Rime 已运行 |
-| `--no-restart` | 只部署配置，不重启 IBus；之后自行执行 `ibus restart` |
-| `--set-default` | 将 `luna_pinyin_simp` 放到 `default.custom.yaml` 中 `schema_list` 的第一位（其余方案保留），切换后默认使用该方案 |
-| `--no-english` | 不提供英文单词候选；若之前已启用，会移除相关配置 |
-| `-h`, `--help` | 显示帮助 |
+| （无） | 生成补充词典、部署 Rime，并通过 `fcitx5-remote -r` 重新加载 |
+| `--no-reload` | 只部署，不重新加载 Fcitx5 |
+| `--set-default` | 将 `rime_ice` 放到 `default.custom.yaml` 方案列表第一位，其他方案保留 |
+| `--no-english` | 停用本项目的英文补充翻译器；中文补充仍保留 |
+| `-h`、`--help` | 显示帮助 |
 
-| 环境变量 | 默认值 |
+兼容旧调用的 `--no-restart` 会按 `--no-reload` 处理。
+
+## 环境变量
+
+| 变量 | 默认值 |
 | --- | --- |
-| `RIME_USER_DIR` | `${XDG_CONFIG_HOME:-~/.config}/ibus/rime` |
+| `RIME_USER_DIR` | `${XDG_DATA_HOME:-~/.local/share}/fcitx5/rime` |
 | `RIME_SHARED_DIR` | `/usr/share/rime-data` |
-| `RIME_PYTHON` | `/usr/bin/python3`（需要已安装 PyYAML） |
-| `RIME_ENGLISH_WORDLIST` | `/usr/share/dict/words`（系统英文词表，由 `wamerican` 等软件包提供） |
+| `RIME_PYTHON` | `/usr/bin/python3` |
+| `RIME_ENGLISH_WORDLIST` | `/usr/share/dict/words` |
+| `FCITX5_REMOTE` | `fcitx5-remote` |
+| `RIME_DEPLOY_REPO` | `xensexyq/rime-simplified-deploy` |
+| `RIME_DEPLOY_BRANCH` | `main` |
+| `RIME_DEPLOY_HOME` | `~/.local/share/rime-simplified-deploy` |
 
-## 问题与配置原理
+## 部署原理
 
-常见故障是自定义配置把 `simplifier/option_name` 设为空字符串，或移除了简体转换开关：方案名叫“简体”，实际却输出繁体。
+脚本生成四个项目专用文件：
 
-本脚本为简体转换指定独立开关 `simplified_output`，默认开启，并明确使用 OpenCC 的 `t2s.json` 繁转简规则。使用独立开关可以避免原有 `zh_simp`（简繁切换快捷键）把转换关掉。
+- `xense_common_phrases.dict.yaml`
+- `xense_common_phrases.schema.yaml`
+- `xense_english_words.dict.yaml`
+- `xense_english_words.schema.yaml`
 
-配置文件：`~/.config/ibus/rime/luna_pinyin_simp.custom.yaml`。以下仅为相关片段，**不要用它覆盖完整文件或原有 switches 列表**：
+随后只通过 `rime_ice.custom.yaml` 添加两个翻译器和方案依赖：
 
-```yaml
-patch:
-  switches:
-    # 保留原来的中英文、全半角和标点开关，在列表中追加：
-    - name: simplified_output
-      reset: 1
-  simplifier/option_name: simplified_output
-  simplifier/opencc_config: t2s.json
+```text
+table_translator@xense_english_words
+table_translator@xense_common_phrases
 ```
 
-## 英文单词候选
+项目不会直接修改以下雾凇文件或数据：
 
-默认方案只有拼音词典，输入 `hello` 只会得到“合理咯”之类的拼音拆分结果，常用英文必须先按 Shift 切换到英文模式。脚本默认为方案增加一个英文词典翻译器 `table_translator@english_words`：
+- `rime_ice.schema.yaml`
+- `rime_ice.dict.yaml`
+- `cn_dicts/`、`en_dicts/`
+- `rime_ice.userdb/`
+- `sync/`
 
-| 输入 | 第一候选 | 说明 |
-| --- | --- | --- |
-| `hello` / `thanks` / `email` | hello / thanks / email | 不是完整拼音，英文排第一 |
-| `github` / `json` / `wifi` / `chatgpt` | GitHub / JSON / WiFi / ChatGPT | 内置词表指定了大小写 |
-| `women` / `make` / `change` | 我们 / 马克 / 嫦娥 | 同时是完整拼音时中文优先，英文在后面的候选中 |
-| `nihao` / `zhongwen` | 你好 / 中文 | 拼音输入不受影响 |
+已有 `rime_ice.custom.yaml` 中的翻页键、方案名称和其他补丁会被保留。内容确实需要变化时，脚本先创建带时间戳的 `.bak-*` 备份；重复执行相同部署不会持续制造备份。
 
-词典由两部分生成为用户目录下的 `english_words.dict.yaml`，每次运行脚本都会重新生成：
+首次写入会由 PyYAML 重新排版并移除原文件注释；修改前的原始文本完整保存在备份中。
 
-- [`english/words.txt`](english/words.txt)：内置的常用技术词汇、品牌名和网络用语，并指定大小写（如 `GitHub`、`macOS`、`Node.js` 的输入码为 `nodejs`）。可以按“每行一个词”自行添加后重新运行脚本。
-- 系统英文词表 `/usr/share/dict/words`（Debian/Ubuntu 的 `wamerican`，约 7 万个词）。同一输入码只保留一个词，优先小写形式；不存在时只启用内置词表并给出提示。
+## 候选排序策略
 
-只匹配完整输入的单词，不做前缀补全，避免拼音输入时出现大量无关英文；英文的 `initial_quality` 为 `0`，因此完整拼音仍然中文优先。需要输入大写开头的英文时，直接按住 Shift 输入首字母即可进入英文直通。
+雾凇主拼音翻译器保持原有权重和用户学习能力。补充词典采用保守排序：
 
-## 常用中文词组和英文缩写
+- 中文补充权重为 `1`，低于雾凇主拼音的 `1.2`；
+- 英文补充权重为 `0`；
+- 两个补充词典均不造句、不补全、不建立独立用户词库；
+- 完整拼音仍优先给出中文，专业英文只在输入完整编码时参与候选。
 
-本项目内置 **147 条中文补充词组**和 **439 条英文词汇/缩写**，同时保留系统朙月拼音词库和原有用户学习记录。这是针对常见场景的补充词表，并非完整的现代汉语大词库。
+这样可以补充专业词汇，同时尽量不改变已有日常输入手感。
 
-| 输入（小写连续输入） | 候选示例 |
+## 词表
+
+项目内置 147 条中文补充短语和 439 条英文词汇/别名。
+
+中文示例：
+
+| 输入 | 候选 |
 | --- | --- |
-| `meiwenti` / `shaodengyixia` | 没问题 / 稍等一下 |
-| `huiyijiyao` / `xiangmujindu` | 会议纪要 / 项目进度 |
-| `shibangongbei` / `xunxujianjin` | 事半功倍 / 循序渐进 |
-| `rengongzhineng` / `jushenzhineng` | 人工智能 / 具身智能 |
-| `lerobot` / `smolvla` / `openvla` | LeRobot / SmolVLA / OpenVLA |
-| `mujoco` / `isaaclab` / `huggingface` | MuJoCo / IsaacLab / HuggingFace |
-| `asap` / `fyi` / `lgtm` | ASAP / FYI / LGTM |
-| `brb` / `tldr` / `idk` | BRB / TLDR / IDK |
-| `kpi` / `okr` / `sop` | KPI / OKR / SOP |
-| `rag` / `slam` / `imu` | RAG / SLAM / IMU |
+| `meiwenti` | 没问题 |
+| `huiyijiyao` | 会议纪要 |
+| `dayuyanmoxing` | 大语言模型 |
+| `shouyanbiaoding` | 手眼标定 |
 
-中文补充采用完整拼音精确匹配，不额外注册中文首字母简码；原拼音方案仍正常工作。英文缩写输入其小写形式，输出词表里指定的大小写。候选排序会受既有配置和使用记录影响，不能保证所有缩写始终排第一。
+英文及工程术语示例：
 
-默认拼写器只接受字母，带数字的词使用明确别名：`ipvfour → IPv4`、`ipvsix → IPv6`、`rostwo → ROS2`、`btob → B2B`、`btoc → B2C`。数字键仍用于选词。
+| 输入 | 候选 |
+| --- | --- |
+| `github` | GitHub |
+| `lerobot` | LeRobot |
+| `smolvla` | SmolVLA |
+| `mujoco` | MuJoCo |
+| `isaaclab` | IsaacLab |
+| `xense` | Xense |
+| `taccap` | TacCap |
+| `rostwo` | ROS2 |
+| `openthreed` | Open3D |
+| `hdffive` | HDF5 |
 
-机器人与训练生态还覆盖 LeRobotDataset、OpenPI、DiffusionPolicy、RoboSuite、ManiSkill、RealSense、MoveIt、WandB 等。带数字的新增名称使用 `openthreed → Open3D`、`hdffive → HDF5`、`hfivepy → h5py`。这些是词表精确匹配，不是任意英文名称识别，也不提供拼写纠错；未收录的新名称仍需补充。
+英文词典还会读取系统 `/usr/share/dict/words`。系统词表缺失时继续部署，只启用仓库内置术语。运行 `--no-english` 可完全停用本项目的英文候选，不影响雾凇自带的 `melt_eng`。
 
 自行补充：
 
-- 中文：编辑 [`chinese/phrases.tsv`](chinese/phrases.tsv)，每行 `词语<Tab>连续小写拼音`，例如 `会议纪要<Tab>huiyijiyao`。`<Tab>` 必须替换成真正的制表符。
-- 英文：编辑 [`english/words.txt`](english/words.txt)，每行一个词，或 `显示内容<Tab>小写字母输入码`。内置英文输入码必须唯一。
-- 修改后执行 `bash deploy.sh`。生成的 `common_phrases.*` 和 `english_words.*` 文件会在下次部署时重新生成，不应直接编辑。
+- 中文：编辑 `chinese/phrases.tsv`，每行 `词语<Tab>连续小写拼音`；
+- 英文：编辑 `english/words.txt`，每行一个词，或 `显示内容<Tab>小写字母输入码`；
+- 修改后重新运行 `bash deploy.sh`。
 
-已有安装可重新执行上面的安装命令升级。若直接修改过下载目录中的词表，先保存修改；安装器会替换下载目录。Git 克隆用户可以 `git pull --ff-only` 后运行 `bash deploy.sh`。`--no-english` 只关闭英文候选，中文补充词组仍然启用。
+生成到 Rime 用户目录的 `xense_*.dict.yaml` 不应直接编辑，下次部署会重新生成。
 
-## 脚本行为
+## 部署验证
 
-- 检查 `rime_deployer`、`ibus`、PyYAML 和 `luna_pinyin_simp` 方案文件。
-- 若尚未部署过 Rime（没有 `build/default.yaml`），先执行一次初始部署。
-- 检查 `luna_pinyin_simp` 已启用；未启用时报错退出，或使用 `--set-default` 自动启用。
-- 已有 `luna_pinyin_simp.custom.yaml` 时：保留其他配置项与原有开关，更新简体转换规则及本项目维护的词库配置，修改前创建带时间戳的 `.bak-*` 备份。
-- 没有该文件时：以方案自带的开关为基础新建，并去掉被取代的 `zh_simp` 开关。
-- 默认启用英文候选：生成 `english_words.dict.yaml` 与 `english_words.schema.yaml`，在自定义配置中追加英文翻译器和方案依赖（保留原有翻译器与依赖）。
-- 中文补充生成独立的 `common_phrases.dict.yaml` 和依赖方案，通过额外翻译器加载，不替换主拼音词典或用户数据库。
-- 配置和词表格式检查在写入自定义配置及词表前完成；首次初始化仍会生成 build 文件。
-- 重新部署，并检查生成的 `build/luna_pinyin_simp.schema.yaml` 包含预期配置、中英文补充词典已编译。
-- 重启 IBus，最多重试 15 秒启用 Rime 并确认引擎名称。
-
-重复执行结果不变（不会重复添加开关）；每次都会备份执行前的配置。YAML 重新写入时会改变排版并移除注释，原始文本保存在备份中。
-
-运行前请提交或取消正在输入的拼音，重启输入法可能中断未提交的输入。
-
-## 验收
+部署完成后检查：
 
 ```bash
-ibus engine
+fcitx5-remote -n
 ```
 
-应输出 `rime`。若启用了多个 Rime 方案，请在方案菜单（默认 `` Ctrl+` `` 或 `F4`）中选择“拼音（简体）”/“朙月拼音·简化字”。在文本编辑器中输入：
+当前输入法为 Rime 时应输出 `rime`。在文本编辑器中测试：
 
-| 拼音 | 预期简体 | 不应出现的繁体形式 |
-| --- | --- | --- |
-| `zhong wen shu ru fa` | 中文输入法 | 中文輸入法 |
-| `jian ti` | 简体 | 簡體 |
-| `han zi` | 汉字 | 漢字 |
+```text
+women             → 我们应保持第一候选
+shouyanbiaoding   → 候选中出现“手眼标定”
+lerobot           → 候选中出现“LeRobot”
+xense             → 候选中出现“Xense”
+```
 
-脚本验证的是部署结果和引擎状态，实际输入仍需上述人工验收。
+脚本还会自动验证已编译的 `build/rime_ice.schema.yaml` 是否包含两个补充翻译器，以及对应二进制词典是否生成。
 
-## 手动部署命令
+## 手动部署
+
+默认路径下的等价命令：
 
 ```bash
-rime_dir="${XDG_CONFIG_HOME:-$HOME/.config}/ibus/rime"
+rime_dir="${XDG_DATA_HOME:-$HOME/.local/share}/fcitx5/rime"
 rime_deployer --build "$rime_dir" /usr/share/rime-data "$rime_dir/build"
-ibus restart
+fcitx5-remote -r
 ```
 
-IBus 重启是异步的。如果刚重启时提示 `No engine is set`，等待几秒后执行 `ibus engine rime`，再执行 `ibus engine` 检查。
+重新加载前请先提交或取消正在输入的内容。
 
-## 恢复原配置
+## 恢复
 
-脚本会打印备份的完整路径。将下面占位路径替换成需要恢复的备份：
+部署时会打印 `rime_ice.custom.yaml` 的备份路径。恢复时将占位路径替换成实际备份：
 
 ```bash
-rime_dir="${XDG_CONFIG_HOME:-$HOME/.config}/ibus/rime"
-cp -- /完整路径/luna_pinyin_simp.custom.yaml.bak-时间戳 \
-  "$rime_dir/luna_pinyin_simp.custom.yaml"
+rime_dir="${XDG_DATA_HOME:-$HOME/.local/share}/fcitx5/rime"
+cp -- /完整路径/rime_ice.custom.yaml.bak-时间戳 "$rime_dir/rime_ice.custom.yaml"
 rime_deployer --build "$rime_dir" /usr/share/rime-data "$rime_dir/build"
-ibus restart
+fcitx5-remote -r
 ```
 
-`default.custom.yaml` 的备份（使用 `--set-default` 时产生）同理。若配置文件是脚本新建的（没有备份），删除该文件后重新部署即可恢复默认。恢复后不要立即重跑部署脚本，否则会再次应用简体设置。备份只覆盖上述自定义配置，不是 Rime 用户词库的备份。
+恢复旧补丁后，`xense_*` 生成文件即使仍留在用户目录也不会被主方案加载，可以稍后手工归档。不要立即重跑部署脚本，否则会再次挂载补充词典。
 
 ## 常见问题
 
-- **`luna_pinyin_simp is not enabled`**：使用 `--set-default` 运行，或在 `default.custom.yaml` 的 `schema_list` 中加入该方案。
-- **缺少方案文件**：安装朙月拼音方案数据（Debian/Ubuntu：`rime-data-luna-pinyin`）。
-- **部署失败**：脚本停止并保留备份；检查 `rime_deployer` 错误输出，必要时按上节恢复。
-- **引擎启动检查失败**：在已登录图形桌面的用户终端运行；等待服务启动后再执行 `ibus engine rime`。不要从 root 或没有桌面会话的 SSH 环境重启。
-- **英文候选没有出现**：确认运行时没有加 `--no-english`，并已重启 IBus；检查 `build/english_words.table.bin` 是否存在。要输入的词不在词表中时，加到 `english/words.txt` 后重新运行脚本。
-- **不想要英文候选**：运行 `bash deploy.sh --no-english`。
-- **仍输出繁体**：确认当前为目标 Rime 方案，并已重新加载输入法；检查 `build/luna_pinyin_simp.schema.yaml` 中的 `simplifier` 与 `switches`。不要直接修改 `build` 目录下的文件，后续部署会覆盖它们。
+- **找不到 `rime_ice.schema.yaml`**：先把雾凇拼音安装到 Fcitx5 用户目录并完成一次部署。
+- **`rime_ice is not enabled`**：使用 `--set-default`，或把 `rime_ice` 加入 `default.custom.yaml`。
+- **部署成功但候选没有变化**：执行 `fcitx5-remote -r`，切换一次输入法后再试。
+- **不想引入系统大英文词表**：把 `RIME_ENGLISH_WORDLIST` 指向不存在的路径，只会使用内置术语；或者使用 `--no-english`。
+- **不想影响正在运行的输入法**：使用 `--no-reload`，稍后自行重新加载。
+- **部署失败**：检查脚本打印的备份路径和 `rime_deployer` 输出；脚本不会删除用户词库。
 
 ## 测试
 
-测试覆盖配置保留、重复部署、英文开关、词表生成和真实候选。配置测试使用模拟工具；`test_candidates.py` 在具备系统 IBus Rime 依赖时调用真实 librime 模拟按键，否则跳过。所有测试均使用临时目录，不会改动真实配置或重启输入法：
+隔离配置测试使用模拟的 `rime_deployer` 和 `fcitx5-remote`。真实候选测试会把本机雾凇目录复制到临时目录，并排除 `userdb`、`sync` 和备份文件；不会修改真实输入法配置。
 
 ```bash
-/usr/bin/python3 -m unittest discover -s tests -v
+/usr/bin/python3 -B -m unittest discover -s tests -v
 ```
 
-已在 Ubuntu 24.04（ibus-rime 1.5.0、librime 1.10）上用真实 `rime_deployer` 对已有配置和空白配置目录验证；上文英文候选表格中的排序结果通过 librime 模拟按键得到。
+没有安装雾凇或 librime 时，真实候选测试会跳过。可以用 `RIME_ICE_TEST_DIR` 指向其他雾凇配置源目录。
 
 ## 许可证
 
-[MIT](LICENSE)。中英文内置词表由项目手工整理；词典和翻译器配置参考 [Rime 官方方案设计文档](https://github.com/rime/home/wiki/RimeWithSchemata)。运行时读取的系统英文词表不随本仓库分发，遵循其所属软件包的许可。
+[MIT](LICENSE)。内置中英文词表由项目维护；雾凇拼音及系统英文词表遵循各自许可证。
